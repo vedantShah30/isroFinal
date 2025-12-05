@@ -19,6 +19,236 @@ const Scene3D = dynamic(() => import("../../components/Scene3D"), {
   loading: () => <div className="fixed inset-0 -z-10 bg-black" />,
 });
 
+// ============================================
+// COORDINATE PARSING UTILITY FUNCTIONS
+// ============================================
+
+/**
+ * Parses coordinate arrays from a response string
+ * Input format: [[[x1, y1], [x2, y2], [x3, y3], [x4, y4]], ...]
+ * Output format: [{C0: {x, y}, C1: {x, y}, C2: {x, y}, C3: {x, y}}, ...]
+ */
+function parseCoordinatesFromResponse(responseText) {
+  if (!responseText || typeof responseText !== "string") {
+    return [];
+  }
+
+  try {
+    const startIdx = responseText.indexOf("[[[");
+    if (startIdx === -1) {
+      return [];
+    }
+
+    let bracketCount = 0;
+    let endIdx = startIdx;
+
+    for (let i = startIdx; i < responseText.length; i++) {
+      if (responseText[i] === "[") {
+        bracketCount++;
+      } else if (responseText[i] === "]") {
+        bracketCount--;
+        if (bracketCount === 0) {
+          endIdx = i + 1;
+          break;
+        }
+      }
+    }
+
+    const coordString = responseText.substring(startIdx, endIdx);
+
+    let parsedCoords;
+    try {
+      parsedCoords = JSON.parse(coordString);
+    } catch (e) {
+      console.error("Failed to parse coordinates JSON:", e);
+      return [];
+    }
+
+    if (!Array.isArray(parsedCoords)) {
+      return [];
+    }
+
+    const transformedCoords = parsedCoords
+      .filter((box) => Array.isArray(box) && box.length === 4)
+      .map((box) => {
+        if (!box.every((point) => Array.isArray(point) && point.length === 2)) {
+          return null;
+        }
+
+        return {
+          C0: { x: box[0][0], y: box[0][1] },
+          C1: { x: box[1][0], y: box[1][1] },
+          C2: { x: box[2][0], y: box[2][1] },
+          C3: { x: box[3][0], y: box[3][1] },
+        };
+      })
+      .filter((coord) => coord !== null);
+
+    return transformedCoords;
+  } catch (error) {
+    console.error("Error parsing coordinates:", error);
+    return [];
+  }
+}
+
+/**
+ * Removes coordinate arrays from response text for cleaner display
+ */
+function removeCoordinatesFromResponse(responseText) {
+  if (!responseText || typeof responseText !== "string") {
+    return responseText;
+  }
+
+  const startIdx = responseText.indexOf("[[[");
+  if (startIdx === -1) {
+    return responseText;
+  }
+
+  let bracketCount = 0;
+  let endIdx = startIdx;
+
+  for (let i = startIdx; i < responseText.length; i++) {
+    if (responseText[i] === "[") {
+      bracketCount++;
+    } else if (responseText[i] === "]") {
+      bracketCount--;
+      if (bracketCount === 0) {
+        endIdx = i + 1;
+        break;
+      }
+    }
+  }
+
+  const beforeCoords = responseText.substring(0, startIdx).trim();
+  const afterCoords = responseText.substring(endIdx).trim();
+
+  let cleanedResponse = (beforeCoords + " " + afterCoords).trim();
+
+  cleanedResponse = cleanedResponse
+    .replace(/\s*coordinates?\s*:?\s*$/i, "")
+    .replace(/\s*boxes?\s*:?\s*$/i, "")
+    .replace(/\s*bounding\s*boxes?\s*:?\s*$/i, "")
+    .trim();
+
+  return cleanedResponse || responseText;
+}
+
+/**
+ * Formats coordinates for display in response text (fallback)
+ */
+function formatCoordinatesForDisplay(coordinates) {
+  if (!coordinates || !Array.isArray(coordinates) || coordinates.length === 0) {
+    return "";
+  }
+
+  try {
+    const formatted = coordinates
+      .map((coord, index) => {
+        if (coord.C0 && coord.C1 && coord.C2 && coord.C3) {
+          return `Box ${index + 1}: [${coord.C0.x.toFixed(4)}, ${coord.C0.y.toFixed(4)}] → [${coord.C1.x.toFixed(4)}, ${coord.C1.y.toFixed(4)}] → [${coord.C2.x.toFixed(4)}, ${coord.C2.y.toFixed(4)}] → [${coord.C3.x.toFixed(4)}, ${coord.C3.y.toFixed(4)}]`;
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    return formatted.length > 0
+      ? "\n\nCoordinates:\n" + formatted.join("\n")
+      : "";
+  } catch (error) {
+    console.error("Error formatting coordinates:", error);
+    return "";
+  }
+}
+
+/**
+ * Validates if coordinates array is valid for rendering bounding boxes
+ */
+function areCoordinatesValidForRendering(coordinates) {
+  if (!coordinates || !Array.isArray(coordinates) || coordinates.length === 0) {
+    return false;
+  }
+
+  return coordinates.every((coord) => {
+    if (!coord || typeof coord !== "object") return false;
+
+    const hasAllCorners = coord.C0 && coord.C1 && coord.C2 && coord.C3;
+    if (!hasAllCorners) return false;
+
+    const allCornersValid = [coord.C0, coord.C1, coord.C2, coord.C3].every(
+      (corner) =>
+        corner &&
+        typeof corner.x === "number" &&
+        typeof corner.y === "number" &&
+        !isNaN(corner.x) &&
+        !isNaN(corner.y)
+    );
+
+    return allCornersValid;
+  });
+}
+
+/**
+ * Processes grounding response with fallback logic
+ */
+function processGroundingResponse(
+  rawResponse,
+  existingCoordinates = [],
+  canRenderBoundingBoxes = true
+) {
+  let responseCoordinates = [];
+  let displayResponse = rawResponse;
+
+  if (
+    existingCoordinates &&
+    Array.isArray(existingCoordinates) &&
+    existingCoordinates.length > 0
+  ) {
+    if (existingCoordinates[0]?.C0) {
+      responseCoordinates = existingCoordinates;
+    } else {
+      responseCoordinates = existingCoordinates
+        .filter((box) => Array.isArray(box) && box.length === 4)
+        .map((box) => ({
+          C0: { x: box[0][0], y: box[0][1] },
+          C1: { x: box[1][0], y: box[1][1] },
+          C2: { x: box[2][0], y: box[2][1] },
+          C3: { x: box[3][0], y: box[3][1] },
+        }));
+    }
+  }
+
+  if (responseCoordinates.length === 0) {
+    responseCoordinates = parseCoordinatesFromResponse(rawResponse);
+  }
+
+  displayResponse = removeCoordinatesFromResponse(rawResponse);
+
+  const coordinatesAreValid = areCoordinatesValidForRendering(responseCoordinates);
+
+  if (!canRenderBoundingBoxes || !coordinatesAreValid) {
+    if (responseCoordinates.length > 0) {
+      const coordsDisplay = formatCoordinatesForDisplay(responseCoordinates);
+      displayResponse = displayResponse + coordsDisplay;
+    }
+
+    if (!canRenderBoundingBoxes) {
+      return {
+        response: displayResponse,
+        coordinates: [],
+      };
+    }
+  }
+
+  return {
+    response: displayResponse,
+    coordinates: responseCoordinates,
+  };
+}
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
+
 export default function ChatDetailPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -47,7 +277,7 @@ export default function ChatDetailPage() {
   const [selectedQueryId, setSelectedQueryId] = useState(null);
   const [isGsdPending, setIsGsdPending] = useState(false);
   const [pendingGsdPrompt, setPendingGsdPrompt] = useState("");
-  const [thinkingQueryId, setThinkingQueryId] = useState(null);
+  const [canRenderBoundingBoxes, setCanRenderBoundingBoxes] = useState(true);
 
   const gsd_keywords = [
     "area",
@@ -91,6 +321,24 @@ export default function ChatDetailPage() {
     "sqft",
   ];
 
+  // Check if bounding box rendering is available
+  useEffect(() => {
+    const checkRenderingCapability = () => {
+      try {
+        const svgSupported = !!document.createElementNS;
+        const canvas = document.createElement("canvas");
+        const canvasSupported = !!(canvas.getContext && canvas.getContext("2d"));
+
+        setCanRenderBoundingBoxes(svgSupported && canvasSupported);
+      } catch (e) {
+        console.error("Error checking rendering capability:", e);
+        setCanRenderBoundingBoxes(false);
+      }
+    };
+
+    checkRenderingCapability();
+  }, []);
+
   const fetchChatData = useCallback(async () => {
     if (!chatId) return;
 
@@ -121,24 +369,8 @@ export default function ChatDetailPage() {
       setActiveChat(chatData);
       setImageUrl(chatData.imageUrl);
 
-      // Extract coordinates from grounding responses
-      const coordinatesData = [];
-      if (chatData.responses && Array.isArray(chatData.responses)) {
-        chatData.responses.forEach((r) => {
-          if (r.type?.toLowerCase() === "grounding" && r.coordinates) {
-            // r.coordinates is an array, so we need to handle each coordinate box
-            if (Array.isArray(r.coordinates)) {
-              coordinatesData.push(...r.coordinates);
-            } else {
-              coordinatesData.push(r.coordinates);
-            }
-          }
-        });
-      }
-
-      // Don't set initial coordinates - only show when a query is clicked
       setCoordinates([]);
-      // Format chat history from responses
+
       if (chatData.responses && chatData.responses.length > 0) {
         const typeMap = {
           captioning: "Captioning",
@@ -147,27 +379,44 @@ export default function ChatDetailPage() {
         };
 
         const formattedMessages = chatData.responses.map((r) => {
-          // Extract coordinates for this specific response
+          const responseText =
+            typeof r.response === "string"
+              ? r.response
+              : JSON.stringify(r.response, null, 2);
+
           let responseCoordinates = [];
-          if (r.type?.toLowerCase() === "grounding" && r.coordinates) {
-            if (Array.isArray(r.coordinates)) {
+          let displayResponse = responseText;
+
+          if (r.type?.toLowerCase() === "grounding") {
+            if (r.coordinates && r.coordinates.length > 0) {
               responseCoordinates = r.coordinates;
+              displayResponse = responseText;
             } else {
-              responseCoordinates = [r.coordinates];
+              responseCoordinates = parseCoordinatesFromResponse(responseText);
+              displayResponse = removeCoordinatesFromResponse(responseText);
+            }
+
+            const coordinatesValid =
+              areCoordinatesValidForRendering(responseCoordinates);
+            if (!canRenderBoundingBoxes || !coordinatesValid) {
+              if (
+                responseCoordinates.length > 0 &&
+                !displayResponse.includes("Coordinates:")
+              ) {
+                displayResponse =
+                  displayResponse +
+                  formatCoordinatesForDisplay(responseCoordinates);
+              }
             }
           }
 
           return {
             id: r._id || Date.now() + Math.random(),
             query: r.prompt || "",
-            response:
-              typeof r.response === "string"
-                ? r.response
-                : JSON.stringify(r.response, null, 2),
+            response: displayResponse,
             category: typeMap[r.type?.toLowerCase()] || "Captioning",
             timestamp: r.timestamp || new Date(),
-            coordinates: responseCoordinates, // Store coordinates with each message
-            isThinking: false,
+            coordinates: responseCoordinates,
           };
         });
 
@@ -179,52 +428,7 @@ export default function ChatDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [chatId]);
-
-  const parseBracketedResponse = (text) => {
-    const regex = /^\[(.*?)\]\s*(.*)$/;
-    const match = text.match(regex);
-    if (!match) return { tag: null, content: text };
-    return {
-      tag: match[1], // e.g., "CAPTIONING"
-      content: match[2], // entire description text
-    };
-  };
-  const drawBoundingBoxesOnImage = async (imageUrl, coords) => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = "Anonymous";
-      img.src = imageUrl;
-
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-
-        canvas.width = img.width;
-        canvas.height = img.height;
-
-        ctx.drawImage(img, 0, 0, img.width, img.height);
-
-        ctx.strokeStyle = "red";
-        ctx.lineWidth = 3;
-
-        coords.forEach((poly) => {
-          ctx.beginPath();
-          poly.forEach(([x, y], i) => {
-            const px = x * img.width;
-            const py = y * img.height;
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-          });
-          ctx.closePath();
-          ctx.stroke();
-        });
-
-        resolve(canvas.toDataURL("image/png"));
-      };
-    });
-  };
-
+  }, [chatId, canRenderBoundingBoxes]);
 
   const sendMessage = async (message, category) => {
     if (!message.trim() || !imageUrl) return;
@@ -232,6 +436,7 @@ export default function ChatDetailPage() {
     const msg = message.trim();
     const tempId = Date.now();
     let finalCategory = category || "Captioning";
+
     if (!isGsdPending) {
       const containsGsd = gsd_keywords.some((word) =>
         msg.toLowerCase().includes(word.toLowerCase())
@@ -249,13 +454,13 @@ export default function ChatDetailPage() {
           category: finalCategory,
           error: false,
           coordinates: [],
-          isThinking: false,
         };
         setChatHistory((prev) => [...prev, tempChat]);
         setInputMessage("");
         return;
       }
     }
+
     if (isGsdPending) {
       const scaleValue = parseFloat(msg);
 
@@ -268,7 +473,6 @@ export default function ChatDetailPage() {
           category: finalCategory,
           error: true,
           coordinates: [],
-          isThinking: false,
         };
         setChatHistory((prev) => [...prev, tempChat]);
         setInputMessage("");
@@ -277,21 +481,18 @@ export default function ChatDetailPage() {
 
       const combinedPrompt = `${pendingGsdPrompt} | SCALE: ${scaleValue}`;
 
-      // Reset state
       setIsGsdPending(false);
       setPendingGsdPrompt("");
       const tempChat = {
         id: tempId,
         query: msg,
-        response: "",
+        response: "Processing...",
         timestamp: new Date(),
         category: finalCategory,
         error: false,
         coordinates: [],
-        isThinking: true,
       };
       setChatHistory((prev) => [...prev, tempChat]);
-      setThinkingQueryId(tempId);
       setInputMessage("");
       await processFinalPrompt(combinedPrompt, finalCategory, tempId);
       return;
@@ -300,12 +501,11 @@ export default function ChatDetailPage() {
     const tempChat = {
       id: tempId,
       query: msg,
-      response: "",
+      response: "Processing...",
       timestamp: new Date(),
       category: finalCategory,
       error: false,
       coordinates: [],
-      isThinking: true,
     };
     setChatHistory((prev) => [...prev, tempChat]);
     setInputMessage("");
@@ -323,7 +523,7 @@ export default function ChatDetailPage() {
       });
 
       const mlData = await mlRes.json();
-      console.log(mlData);
+      console.log("ML Response:", mlData);
 
       if (!mlRes.ok) throw new Error(mlData.error || "Error from ML model");
 
@@ -334,22 +534,33 @@ export default function ChatDetailPage() {
         aiResponse =
           mlData.caption || mlData.response || JSON.stringify(mlData);
       } else if (categoryLower === "grounding") {
-        aiResponse =
+        const rawResponse =
           mlData.description || mlData.response || JSON.stringify(mlData);
-        responseCoordinates = mlData.coordinates || [];
-        if (responseCoordinates.length > 0) {
-          const newImageUrl = await drawBoundingBoxesOnImage(
-            imageUrl,
-            responseCoordinates
-          );
-          setImageUrl(newImageUrl);
-        }
+
+        const processedResult = processGroundingResponse(
+          rawResponse,
+          mlData.coordinates || [],
+          canRenderBoundingBoxes
+        );
+
+        aiResponse = processedResult.response;
+        responseCoordinates = processedResult.coordinates;
+
+        console.log("Parsed coordinates:", responseCoordinates);
+        console.log("Can render bounding boxes:", canRenderBoundingBoxes);
       } else if (categoryLower === "vqa") {
         aiResponse = mlData.answer || mlData.response || JSON.stringify(mlData);
       } else {
-        aiResponse = mlData.response || JSON.stringify(mlData);
-        responseCoordinates = mlData.coordinates || [];
+        const rawResponse = mlData.response || JSON.stringify(mlData);
+        const processedResult = processGroundingResponse(
+          rawResponse,
+          mlData.coordinates || [],
+          canRenderBoundingBoxes
+        );
+        aiResponse = processedResult.response;
+        responseCoordinates = processedResult.coordinates;
       }
+
       setChatHistory((prev) =>
         prev.map((c) =>
           c.id === tempId
@@ -374,9 +585,11 @@ export default function ChatDetailPage() {
             {
               type: categoryLower,
               prompt: msg,
-              response: aiResponse,
+              response: removeCoordinatesFromResponse(aiResponse),
               coordinates:
-                categoryLower === "grounding" ? responseCoordinates : [],
+                categoryLower === "grounding" || responseCoordinates.length > 0
+                  ? responseCoordinates
+                  : [],
             },
           ],
           metadata: {
@@ -399,27 +612,12 @@ export default function ChatDetailPage() {
                   ...c,
                   response: data.error || "Error saving chat",
                   error: true,
-                  isThinking: false,
                 }
               : c
           )
         );
-        setThinkingQueryId(null);
         return;
       }
-      setChatHistory((prev) =>
-        prev.map((c) =>
-          c.id === tempId
-            ? {
-                ...c,
-                response: aiResponse,
-                coordinates: responseCoordinates,
-                isThinking: false,
-              }
-            : c
-        )
-      );
-      setThinkingQueryId(null);
     } catch (error) {
       console.error(error);
       setChatHistory((prev) =>
@@ -427,14 +625,12 @@ export default function ChatDetailPage() {
           c.id === tempId
             ? {
                 ...c,
-                response: error.message || "An error occurred",
+                response: error.message || "Error processing request",
                 error: true,
-                isThinking: false,
               }
             : c
         )
       );
-      setThinkingQueryId(null);
     } finally {
       setIsAnalyzing(false);
     }
@@ -461,16 +657,26 @@ export default function ChatDetailPage() {
       if (categoryLower === "captioning") {
         aiResponse = mlData.caption || mlData.response;
       } else if (categoryLower === "grounding") {
-        aiResponse = mlData.description || mlData.response;
-        responseCoordinates = mlData.coordinates || [];
+        const rawResponse = mlData.description || mlData.response;
+        const processedResult = processGroundingResponse(
+          rawResponse,
+          mlData.coordinates || [],
+          canRenderBoundingBoxes
+        );
+        aiResponse = processedResult.response;
+        responseCoordinates = processedResult.coordinates;
       } else if (categoryLower === "vqa") {
         aiResponse = mlData.answer || mlData.response;
       } else {
-        aiResponse = mlData.response;
-        responseCoordinates = mlData.coordinates || [];
+        const rawResponse = mlData.response;
+        const processedResult = processGroundingResponse(
+          rawResponse,
+          mlData.coordinates || [],
+          canRenderBoundingBoxes
+        );
+        aiResponse = processedResult.response;
+        responseCoordinates = processedResult.coordinates;
       }
-      const parsed = parseBracketedResponse(aiResponse);
-      aiResponse = parsed.content;
 
       await fetch("/api/chats/update", {
         method: "POST",
@@ -482,40 +688,32 @@ export default function ChatDetailPage() {
           responses: [
             {
               type: categoryLower,
-              prompt: prompt, // <- backend receives combined prompt
-              response: aiResponse,
+              prompt: prompt,
+              response: removeCoordinatesFromResponse(aiResponse),
               coordinates: responseCoordinates,
             },
           ],
           metadata: {
             uploadedAt: chat?.metadata?.uploadedAt || new Date(),
             processingTime: 0,
-            imageSize: chat?.metadata?.imageSize || "2000x2000",
+            imageSize: chat?.metadata?.imageSize || "1024x1024",
           },
         }),
       });
+
       setChatHistory((prev) =>
         prev.map((c) =>
           c.id === tempId
-            ? {
-                ...c,
-                response: aiResponse,
-                coordinates: responseCoordinates,
-                isThinking: false,
-              }
+            ? { ...c, response: aiResponse, coordinates: responseCoordinates }
             : c
         )
       );
-      setThinkingQueryId(null);
     } catch (err) {
       setChatHistory((prev) =>
         prev.map((c) =>
-          c.id === tempId
-            ? { ...c, response: err.message, error: true, isThinking: false }
-            : c
+          c.id === tempId ? { ...c, response: err.message, error: true } : c
         )
       );
-      setThinkingQueryId(null);
     } finally {
       setIsAnalyzing(false);
     }
@@ -534,7 +732,6 @@ export default function ChatDetailPage() {
     fetchChatData();
   }, [status, chatId, router, fetchChatData]);
 
-  // Preload user chats for sidebar
   useEffect(() => {
     if (!session) return;
 
@@ -557,7 +754,6 @@ export default function ChatDetailPage() {
     preloadChats();
   }, [session, reloadChats]);
 
-  // Load routines
   useEffect(() => {
     if (!session) return;
 
@@ -605,25 +801,25 @@ export default function ChatDetailPage() {
   }
 
   const handleImageSelect = (file, cloudUrl) => {
-    // Handle image selection if needed
     setImageUrl(cloudUrl);
   };
 
   const handleQueryClick = (chatItem) => {
     setSelectedQueryId(chatItem.id);
 
-    // If it's a grounding query, show its coordinates
     if (
       chatItem.category === "Grounding" &&
       chatItem.coordinates &&
-      chatItem.coordinates.length > 0
+      chatItem.coordinates.length > 0 &&
+      canRenderBoundingBoxes &&
+      areCoordinatesValidForRendering(chatItem.coordinates)
     ) {
       setCoordinates(chatItem.coordinates);
-      console.log(chatItem.coordinates);
+      console.log("Setting coordinates:", chatItem.coordinates);
       setSelectedCategory("Grounding");
     } else {
-      // Clear coordinates for non-grounding queries
       setCoordinates([]);
+      setSelectedCategory("");
     }
   };
 
@@ -770,7 +966,8 @@ export default function ChatDetailPage() {
         const hasGrounding =
           item.category === "Grounding" &&
           item.coordinates &&
-          item.coordinates.length > 0;
+          item.coordinates.length > 0 &&
+          areCoordinatesValidForRendering(item.coordinates);
 
         if (hasGrounding) {
           blockHeight += imgDisplayHeight + 16;
@@ -841,7 +1038,6 @@ export default function ChatDetailPage() {
   };
 
   const openChat = (selectedChat) => {
-    // Navigate to the selected chat's page
     router.push(`/chat/${selectedChat._id}`);
   };
 
@@ -919,19 +1115,16 @@ export default function ChatDetailPage() {
     for (let i = 0; i < sortedPrompts.length; i++) {
       const prompt = sortedPrompts[i];
       const category =
-        prompt.type.charAt(0).toUpperCase() + prompt.type.slice(1); // Capitalize first letter
+        prompt.type.charAt(0).toUpperCase() + prompt.type.slice(1);
 
       try {
-        // Use the existing sendMessage logic but wait for each to complete
         await sendMessage(prompt.prompt, category);
 
-        // Add a small delay between prompts to avoid overwhelming the API
         if (i < sortedPrompts.length - 1) {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
       } catch (error) {
         console.error(`Error executing prompt ${i + 1}:`, error);
-        // Continue with next prompt even if one fails
       }
     }
     setIsAnalyzing(false);
@@ -958,6 +1151,7 @@ export default function ChatDetailPage() {
 
     setIsSaveRoutineModalOpen(true);
   };
+
   return (
     <div className="min-h-screen text-white overflow-hidden relative bg-black">
       <Scene3D />
@@ -969,10 +1163,8 @@ export default function ChatDetailPage() {
         onGeneratePdf={handleGenerateSummaryPdf}
       />
 
-      {/* Main content area */}
       <main className="relative z-20 ml-20">
         <div className="max-w-7xl mx-auto px-6 pt-9 flex gap-8">
-          {/* Left - Image box */}
           <div className="w-[800px] flex items-center justify-center">
             <UploadCard
               onImageSelect={handleImageSelect}
@@ -983,23 +1175,21 @@ export default function ChatDetailPage() {
               setBoundingBox={Boolean(
                 selectedQueryId &&
                   coordinates.length > 0 &&
-                  selectedCategory === "Grounding"
+                  selectedCategory === "Grounding" &&
+                  canRenderBoundingBoxes
               )}
               onCropComplete={fetchChatData}
             />
           </div>
 
-          {/* Right - Chat Section */}
           <ChatSection
             chatHistory={chatHistory}
             onQueryClick={handleQueryClick}
             selectedQueryId={selectedQueryId}
-            thinkingQueryId={thinkingQueryId}
           />
         </div>
         {isChatListOpen && (
           <div className="fixed right-0 top-0 h-full w-80 bg-[#0f1720] border-l border-cyan-800/20 p-4 overflow-y-auto z-50 shadow-xl">
-            {/* Header */}
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 to-blue-500 ">
                 Your Chats
@@ -1009,7 +1199,6 @@ export default function ChatDetailPage() {
                 onClick={() => setIsChatListOpen(false)}
                 className="text-gray-300 hover:text-white transition"
               >
-                {/* Close Icon */}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="22"
@@ -1027,7 +1216,6 @@ export default function ChatDetailPage() {
               </button>
             </div>
 
-            {/* Chat list */}
             {userChats.map((chat) => (
               <ChatListItem
                 key={chat._id}
@@ -1058,7 +1246,6 @@ export default function ChatDetailPage() {
                       activeChat?._id === chatIdToDelete ||
                       chatId === chatIdToDelete
                     ) {
-                      // If deleting current chat, redirect to chat page
                       router.push("/image");
                     }
                   }
@@ -1069,7 +1256,6 @@ export default function ChatDetailPage() {
         )}
       </main>
 
-      {/* Bottom - Searchbox/Promptbox */}
       <div className="relative z-10 text-center">
         <Promptbox
           value={inputMessage}
@@ -1080,7 +1266,6 @@ export default function ChatDetailPage() {
         />
       </div>
 
-      {/* Routines Modal */}
       <RoutinesModal
         open={isRoutinesOpen}
         onClose={() => setIsRoutinesOpen(false)}
@@ -1088,7 +1273,6 @@ export default function ChatDetailPage() {
         onSelectRoutine={handleSelectRoutine}
       />
 
-      {/* Save Routine Modal */}
       <SaveRoutineModal
         open={isSaveRoutineModalOpen}
         onClose={() => setIsSaveRoutineModalOpen(false)}
@@ -1096,7 +1280,6 @@ export default function ChatDetailPage() {
         promptCount={chatHistory.length}
       />
 
-      {/* Toast Notification */}
       <Toast
         message={toastMessage}
         type={toastType}
