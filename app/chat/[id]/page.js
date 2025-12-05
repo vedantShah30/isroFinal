@@ -19,29 +19,17 @@ const Scene3D = dynamic(() => import("../../components/Scene3D"), {
   loading: () => <div className="fixed inset-0 -z-10 bg-black" />,
 });
 
-// ============================================
-// COORDINATE PARSING UTILITY FUNCTIONS
-// ============================================
-
-/**
- * Parses coordinate arrays from a response string
- * Input format: [[[x1, y1], [x2, y2], [x3, y3], [x4, y4]], ...]
- * Output format: [{C0: {x, y}, C1: {x, y}, C2: {x, y}, C3: {x, y}}, ...]
- */
 function parseCoordinatesFromResponse(responseText) {
   if (!responseText || typeof responseText !== "string") {
     return [];
   }
-
   try {
     const startIdx = responseText.indexOf("[[[");
     if (startIdx === -1) {
       return [];
     }
-
     let bracketCount = 0;
     let endIdx = startIdx;
-
     for (let i = startIdx; i < responseText.length; i++) {
       if (responseText[i] === "[") {
         bracketCount++;
@@ -53,9 +41,7 @@ function parseCoordinatesFromResponse(responseText) {
         }
       }
     }
-
     const coordString = responseText.substring(startIdx, endIdx);
-
     let parsedCoords;
     try {
       parsedCoords = JSON.parse(coordString);
@@ -63,7 +49,6 @@ function parseCoordinatesFromResponse(responseText) {
       console.error("Failed to parse coordinates JSON:", e);
       return [];
     }
-
     if (!Array.isArray(parsedCoords)) {
       return [];
     }
@@ -90,10 +75,6 @@ function parseCoordinatesFromResponse(responseText) {
     return [];
   }
 }
-
-/**
- * Removes coordinate arrays from response text for cleaner display
- */
 function removeCoordinatesFromResponse(responseText) {
   if (!responseText || typeof responseText !== "string") {
     return responseText;
@@ -132,10 +113,6 @@ function removeCoordinatesFromResponse(responseText) {
 
   return cleanedResponse || responseText;
 }
-
-/**
- * Formats coordinates for display in response text (fallback)
- */
 function formatCoordinatesForDisplay(coordinates) {
   if (!coordinates || !Array.isArray(coordinates) || coordinates.length === 0) {
     return "";
@@ -167,10 +144,6 @@ function formatCoordinatesForDisplay(coordinates) {
     return "";
   }
 }
-
-/**
- * Validates if coordinates array is valid for rendering bounding boxes
- */
 function areCoordinatesValidForRendering(coordinates) {
   if (!coordinates || !Array.isArray(coordinates) || coordinates.length === 0) {
     return false;
@@ -194,10 +167,6 @@ function areCoordinatesValidForRendering(coordinates) {
     return allCornersValid;
   });
 }
-
-/**
- * Processes grounding response with fallback logic
- */
 function processGroundingResponse(
   rawResponse,
   existingCoordinates = [],
@@ -253,11 +222,6 @@ function processGroundingResponse(
     coordinates: responseCoordinates,
   };
 }
-
-// ============================================
-// MAIN COMPONENT
-// ============================================
-
 export default function ChatDetailPage() {
   const { data: session, status } = useSession();
   const router = useRouter();

@@ -22,19 +22,16 @@ export default function ChatSection({
     setLocalSelectedId(selectedQueryId);
   }, [selectedQueryId]);
 
-  // Track which chats are currently thinking
   useEffect(() => {
     if (thinkingQueryId) {
       wasThinkingRef.current.add(thinkingQueryId);
     }
   }, [thinkingQueryId]);
 
-  // Scroll to bottom when new messages are added or typing progresses
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, thinkingQueryId, typingStates]);
 
-  // Track new responses that need typing effect
   useEffect(() => {
     chatHistory.forEach((chat) => {
       if (chat.id) {
@@ -67,7 +64,6 @@ export default function ChatSection({
     });
   }, [chatHistory, completedTyping]);
 
-  // Hide scrollbar styles
   useEffect(() => {
     const style = document.createElement("style");
     style.textContent = `
@@ -122,7 +118,6 @@ export default function ChatSection({
         </div>
       </div>
 
-      {/* Chat Messages */}
       <div
         className="flex-1 overflow-y-auto p-6 space-y-8 chat-messages-area"
         onClick={() => {
@@ -136,14 +131,11 @@ export default function ChatSection({
           </div>
         ) : (
           filteredChatHistory.map((chat) => {
-            // Check if this chat is in thinking state
             const isThinking = chat.isThinking && thinkingQueryId === chat.id;
-            // Check if has response but not in thinking state
             const hasResponse = chat.response && !isThinking;
 
             return (
               <div key={chat.id} className="space-y-3">
-                {/* USER QUERY */}
                 <div className="flex flex-col items-end">
                   <span className="text-xs text-blue-400 mb-0.5 px-2 font-medium">
                     {chat.category}
@@ -167,16 +159,13 @@ export default function ChatSection({
                   </button>
                 </div>
 
-                {/* MODEL RESPONSE OR THINKING STATE */}
                 {isThinking ? (
-                  // Show thinking effect when isThinking is true
                   <div className="flex flex-col items-start">
                     <div className="bg-black text-white px-4 py-3 rounded-lg max-w-[75%] border border-cyan-700/20 shadow-lg">
                       <ThinkingEffect isVisible={true} />
                     </div>
                   </div>
                 ) : hasResponse ? (
-                  // Show response with typing effect for new responses
                   <div className="flex flex-col items-start">
                     <div
                       className={`bg-black text-white px-2 py-3 rounded-lg max-w-[75%] border shadow-lg ${
