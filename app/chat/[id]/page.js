@@ -145,7 +145,15 @@ function formatCoordinatesForDisplay(coordinates) {
     const formatted = coordinates
       .map((coord, index) => {
         if (coord.C0 && coord.C1 && coord.C2 && coord.C3) {
-          return `Box ${index + 1}: [${coord.C0.x.toFixed(4)}, ${coord.C0.y.toFixed(4)}] → [${coord.C1.x.toFixed(4)}, ${coord.C1.y.toFixed(4)}] → [${coord.C2.x.toFixed(4)}, ${coord.C2.y.toFixed(4)}] → [${coord.C3.x.toFixed(4)}, ${coord.C3.y.toFixed(4)}]`;
+          return `Box ${index + 1}: [${coord.C0.x.toFixed(
+            4
+          )}, ${coord.C0.y.toFixed(4)}] → [${coord.C1.x.toFixed(
+            4
+          )}, ${coord.C1.y.toFixed(4)}] → [${coord.C2.x.toFixed(
+            4
+          )}, ${coord.C2.y.toFixed(4)}] → [${coord.C3.x.toFixed(
+            4
+          )}, ${coord.C3.y.toFixed(4)}]`;
         }
         return null;
       })
@@ -223,7 +231,8 @@ function processGroundingResponse(
 
   displayResponse = removeCoordinatesFromResponse(rawResponse);
 
-  const coordinatesAreValid = areCoordinatesValidForRendering(responseCoordinates);
+  const coordinatesAreValid =
+    areCoordinatesValidForRendering(responseCoordinates);
 
   if (!canRenderBoundingBoxes || !coordinatesAreValid) {
     if (responseCoordinates.length > 0) {
@@ -278,7 +287,7 @@ export default function ChatDetailPage() {
   const [isGsdPending, setIsGsdPending] = useState(false);
   const [pendingGsdPrompt, setPendingGsdPrompt] = useState("");
   const [canRenderBoundingBoxes, setCanRenderBoundingBoxes] = useState(true);
-
+  const [thinkingQueryId, setThinkingQueryId] = useState(null);
   const gsd_keywords = [
     "area",
     "dimensions",
@@ -327,7 +336,9 @@ export default function ChatDetailPage() {
       try {
         const svgSupported = !!document.createElementNS;
         const canvas = document.createElement("canvas");
-        const canvasSupported = !!(canvas.getContext && canvas.getContext("2d"));
+        const canvasSupported = !!(
+          canvas.getContext && canvas.getContext("2d")
+        );
 
         setCanRenderBoundingBoxes(svgSupported && canvasSupported);
       } catch (e) {
@@ -486,13 +497,15 @@ export default function ChatDetailPage() {
       const tempChat = {
         id: tempId,
         query: msg,
-        response: "Processing...",
+        response: "",
         timestamp: new Date(),
         category: finalCategory,
         error: false,
         coordinates: [],
+        isThinking: true,
       };
       setChatHistory((prev) => [...prev, tempChat]);
+      setThinkingQueryId(tempId);
       setInputMessage("");
       await processFinalPrompt(combinedPrompt, finalCategory, tempId);
       return;
@@ -501,13 +514,15 @@ export default function ChatDetailPage() {
     const tempChat = {
       id: tempId,
       query: msg,
-      response: "Processing...",
+      response: "",
       timestamp: new Date(),
       category: finalCategory,
       error: false,
       coordinates: [],
+      isThinking: true,
     };
     setChatHistory((prev) => [...prev, tempChat]);
+    setThinkingQueryId(tempId);
     setInputMessage("");
 
     try {
@@ -569,11 +584,13 @@ export default function ChatDetailPage() {
                 response: aiResponse,
                 coordinates: responseCoordinates,
                 error: false,
+                isThinking: false,
               }
             : c
         )
       );
 
+      setThinkingQueryId(null);
       const res = await fetch("/api/chats/update", {
         method: "POST",
         credentials: "include",
@@ -612,10 +629,12 @@ export default function ChatDetailPage() {
                   ...c,
                   response: data.error || "Error saving chat",
                   error: true,
+                  isThinking: false,
                 }
               : c
           )
         );
+        setThinkingQueryId(null);
         return;
       }
     } catch (error) {
@@ -627,10 +646,12 @@ export default function ChatDetailPage() {
                 ...c,
                 response: error.message || "Error processing request",
                 error: true,
+                isThinking: false,
               }
             : c
         )
       );
+      setThinkingQueryId(null);
     } finally {
       setIsAnalyzing(false);
     }
@@ -696,7 +717,7 @@ export default function ChatDetailPage() {
           metadata: {
             uploadedAt: chat?.metadata?.uploadedAt || new Date(),
             processingTime: 0,
-            imageSize: chat?.metadata?.imageSize || "1024x1024",
+            imageSize: chat?.metadata?.imageSize || "2000x2000",
           },
         }),
       });
@@ -704,16 +725,25 @@ export default function ChatDetailPage() {
       setChatHistory((prev) =>
         prev.map((c) =>
           c.id === tempId
-            ? { ...c, response: aiResponse, coordinates: responseCoordinates }
+            ? {
+                ...c,
+                response: aiResponse,
+                coordinates: responseCoordinates,
+                isThinking: false,
+              }
             : c
         )
       );
+      setThinkingQueryId(null);
     } catch (err) {
       setChatHistory((prev) =>
         prev.map((c) =>
-          c.id === tempId ? { ...c, response: err.message, error: true } : c
+          c.id === tempId
+            ? { ...c, response: err.message, error: true, isThinking: false }
+            : c
         )
       );
+      setThinkingQueryId(null);
     } finally {
       setIsAnalyzing(false);
     }
@@ -1186,6 +1216,7 @@ export default function ChatDetailPage() {
             chatHistory={chatHistory}
             onQueryClick={handleQueryClick}
             selectedQueryId={selectedQueryId}
+            thinkingQueryId={thinkingQueryId}
           />
         </div>
         {isChatListOpen && (

@@ -3,14 +3,7 @@
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import ThinkingEffect from "./ThinkingEffect";
-import TypingEffect from "./TypingEffect";
 
-/**
- * @param {Object} props - Component props
- * @param {Array} props.chatHistory - Array of chat objects: [{ id?: number, query: string, response: string, category: 'Captioning'|'Grounding'|'VQA', timestamp?: Date, coordinates?: Array }]
- * @param {Function} props.onQueryClick - Callback function when a query is clicked: (chat: Object) => void
- * @param {String} props.selectedQueryId - ID of the currently selected query
- */
 export default function ChatSection({
   chatHistory = [],
   onQueryClick = null,
@@ -20,11 +13,8 @@ export default function ChatSection({
   const [activeTab, setActiveTab] = useState("All");
   const chatEndRef = useRef(null);
   const [localSelectedId, setLocalSelectedId] = useState(selectedQueryId);
-  // Track which chat responses have completed typing
-  const completedTypingRef = useRef(new Set());
-  // Track which chats were in thinking state (to detect new responses)
+  const [completedTyping, setCompletedTyping] = useState(new Set());
   const wasThinkingRef = useRef(new Set());
-  // Track previous response states to detect new responses
   const previousResponsesRef = useRef(new Map());
   const [typingStates, setTypingStates] = useState({});
 
@@ -50,37 +40,32 @@ export default function ChatSection({
       if (chat.id) {
         const previousResponse = previousResponsesRef.current.get(chat.id);
         const currentResponse = chat.response || "";
-        
-        // Check if this chat was in thinking state (new response, not loaded from DB)
+
         const wasInThinkingState = wasThinkingRef.current.has(chat.id);
-        
-        // Detect if this is a new response:
-        // 1. Has current response text
-        // 2. Previous response was empty or undefined
-        // 3. Not already completed typing
-        // 4. Was in thinking state (indicates newly received, not loaded from DB)
-        const isNewResponse = 
-          currentResponse && 
+
+        const isNewResponse =
+          currentResponse &&
           (!previousResponse || previousResponse === "") &&
-          !completedTypingRef.current.has(chat.id) &&
+          !completedTyping.has(chat.id) &&
           wasInThinkingState;
-        
-        // Update previous response tracking
+
         previousResponsesRef.current.set(chat.id, currentResponse);
-        
-        // If this is a new response, start typing effect
+
         if (isNewResponse) {
           setTypingStates((prev) => ({
             ...prev,
             [chat.id]: { isTyping: true, hasStarted: true },
           }));
-        } else if (currentResponse && previousResponse === undefined && !wasInThinkingState) {
-          // If response exists on first render and wasn't thinking (loaded from DB), skip typing
-          completedTypingRef.current.add(chat.id);
+        } else if (
+          currentResponse &&
+          previousResponse === undefined &&
+          !wasInThinkingState
+        ) {
+          setCompletedTyping((prev) => new Set([...prev, chat.id]));
         }
       }
     });
-  }, [chatHistory]);
+  }, [chatHistory, completedTyping]);
 
   // Hide scrollbar styles
   useEffect(() => {
@@ -151,8 +136,10 @@ export default function ChatSection({
           </div>
         ) : (
           filteredChatHistory.map((chat) => {
-            const isThinking =
-              Boolean(chat.isThinking) && thinkingQueryId === chat.id;
+            // Check if this chat is in thinking state
+            const isThinking = chat.isThinking && thinkingQueryId === chat.id;
+            // Check if has response but not in thinking state
+            const hasResponse = chat.response && !isThinking;
 
             return (
               <div key={chat.id} className="space-y-3">
@@ -180,21 +167,24 @@ export default function ChatSection({
                   </button>
                 </div>
 
-                {/* MODEL RESPONSE */}
+                {/* MODEL RESPONSE OR THINKING STATE */}
                 {isThinking ? (
+                  // Show thinking effect when isThinking is true
                   <div className="flex flex-col items-start">
                     <div className="bg-black text-white px-4 py-3 rounded-lg max-w-[75%] border border-cyan-700/20 shadow-lg">
                       <ThinkingEffect isVisible={true} />
                     </div>
                   </div>
-                ) : chat.response ? (
+                ) : hasResponse ? (
+                  // Show response with typing effect for new responses
                   <div className="flex flex-col items-start">
                     <div
                       className={`bg-black text-white px-2 py-3 rounded-lg max-w-[75%] border shadow-lg ${
                         chat.error ? "border-red-500/30" : "border-black"
                       }`}
                     >
-                      {typingStates[chat.id]?.isTyping && !completedTypingRef.current.has(chat.id) ? (
+                      {typingStates[chat.id]?.isTyping &&
+                      !completedTyping.has(chat.id) ? (
                         <p
                           className={`leading-relaxed whitespace-pre-wrap break-words max-w-full ${
                             chat.error ? "text-red-400" : ""
@@ -205,10 +195,15 @@ export default function ChatSection({
                             speed={15}
                             isVisible={true}
                             onComplete={() => {
-                              completedTypingRef.current.add(chat.id);
+                              setCompletedTyping(
+                                (prev) => new Set([...prev, chat.id])
+                              );
                               setTypingStates((prev) => ({
                                 ...prev,
-                                [chat.id]: { isTyping: false, hasStarted: true },
+                                [chat.id]: {
+                                  isTyping: false,
+                                  hasStarted: true,
+                                },
                               }));
                             }}
                           />
@@ -224,38 +219,7 @@ export default function ChatSection({
                       )}
                     </div>
                   </div>
-                ) : (
-                  <div className="flex flex-col items-start">
-                    <div className="bg-black text-white px-2 py-3 rounded-lg max-w-[75%] border border-black shadow-lg">
-                      <div className="flex items-center space-x-2">
-                        <svg
-                          className="animate-spin h-4 w-4 text-cyan-400"
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            fill="none"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          />
-                        </svg>
-                        <span className="text-sm text-slate-400">
-                          Processing...
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                ) : null}
               </div>
             );
           })
