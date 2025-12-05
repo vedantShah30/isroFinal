@@ -271,7 +271,7 @@ export default function ChatDetailPage() {
       });
 
       const mlData = await mlRes.json();
-      console.log(mlData)
+      console.log(mlData);
 
       if (!mlRes.ok) throw new Error(mlData.error || "Error from ML model");
 
@@ -291,6 +291,18 @@ export default function ChatDetailPage() {
         aiResponse = mlData.response || JSON.stringify(mlData);
         responseCoordinates = mlData.coordinates || [];
       }
+      setChatHistory((prev) =>
+        prev.map((c) =>
+          c.id === tempId
+            ? {
+                ...c,
+                response: aiResponse,
+                coordinates: responseCoordinates,
+                error: false,
+              }
+            : c
+        )
+      );
 
       const res = await fetch("/api/chats/update", {
         method: "POST",
@@ -471,7 +483,7 @@ export default function ChatDetailPage() {
   }, [session, reloadRoutines]);
 
   if (status === "loading" || loading) {
-    return <Loader/>;
+    return <Loader />;
   }
 
   if (!session) {
