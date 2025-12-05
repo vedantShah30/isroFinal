@@ -47,6 +47,7 @@ export default function ChatDetailPage() {
   const [selectedQueryId, setSelectedQueryId] = useState(null);
   const [isGsdPending, setIsGsdPending] = useState(false);
   const [pendingGsdPrompt, setPendingGsdPrompt] = useState("");
+  const [thinkingQueryId, setThinkingQueryId] = useState(null);
 
   const gsd_keywords = [
     "area",
@@ -166,6 +167,7 @@ export default function ChatDetailPage() {
             category: typeMap[r.type?.toLowerCase()] || "Captioning",
             timestamp: r.timestamp || new Date(),
             coordinates: responseCoordinates, // Store coordinates with each message
+            isThinking: false,
           };
         });
 
@@ -178,6 +180,51 @@ export default function ChatDetailPage() {
       setLoading(false);
     }
   }, [chatId]);
+
+  const parseBracketedResponse = (text) => {
+    const regex = /^\[(.*?)\]\s*(.*)$/;
+    const match = text.match(regex);
+    if (!match) return { tag: null, content: text };
+    return {
+      tag: match[1], // e.g., "CAPTIONING"
+      content: match[2], // entire description text
+    };
+  };
+  const drawBoundingBoxesOnImage = async (imageUrl, coords) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "Anonymous";
+      img.src = imageUrl;
+
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+
+        ctx.drawImage(img, 0, 0, img.width, img.height);
+
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 3;
+
+        coords.forEach((poly) => {
+          ctx.beginPath();
+          poly.forEach(([x, y], i) => {
+            const px = x * img.width;
+            const py = y * img.height;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          });
+          ctx.closePath();
+          ctx.stroke();
+        });
+
+        resolve(canvas.toDataURL("image/png"));
+      };
+    });
+  };
+
 
   const sendMessage = async (message, category) => {
     if (!message.trim() || !imageUrl) return;
@@ -202,6 +249,7 @@ export default function ChatDetailPage() {
           category: finalCategory,
           error: false,
           coordinates: [],
+          isThinking: false,
         };
         setChatHistory((prev) => [...prev, tempChat]);
         setInputMessage("");
@@ -220,6 +268,7 @@ export default function ChatDetailPage() {
           category: finalCategory,
           error: true,
           coordinates: [],
+          isThinking: false,
         };
         setChatHistory((prev) => [...prev, tempChat]);
         setInputMessage("");
@@ -234,13 +283,15 @@ export default function ChatDetailPage() {
       const tempChat = {
         id: tempId,
         query: msg,
-        response: "Processing...",
+        response: "",
         timestamp: new Date(),
         category: finalCategory,
         error: false,
         coordinates: [],
+        isThinking: true,
       };
       setChatHistory((prev) => [...prev, tempChat]);
+      setThinkingQueryId(tempId);
       setInputMessage("");
       await processFinalPrompt(combinedPrompt, finalCategory, tempId);
       return;
@@ -249,11 +300,12 @@ export default function ChatDetailPage() {
     const tempChat = {
       id: tempId,
       query: msg,
-      response: "Processing...",
+      response: "",
       timestamp: new Date(),
       category: finalCategory,
       error: false,
       coordinates: [],
+      isThinking: true,
     };
     setChatHistory((prev) => [...prev, tempChat]);
     setInputMessage("");
@@ -285,6 +337,13 @@ export default function ChatDetailPage() {
         aiResponse =
           mlData.description || mlData.response || JSON.stringify(mlData);
         responseCoordinates = mlData.coordinates || [];
+        if (responseCoordinates.length > 0) {
+          const newImageUrl = await drawBoundingBoxesOnImage(
+            imageUrl,
+            responseCoordinates
+          );
+          setImageUrl(newImageUrl);
+        }
       } else if (categoryLower === "vqa") {
         aiResponse = mlData.answer || mlData.response || JSON.stringify(mlData);
       } else {
@@ -340,14 +399,42 @@ export default function ChatDetailPage() {
                   ...c,
                   response: data.error || "Error saving chat",
                   error: true,
+                  isThinking: false,
                 }
               : c
           )
         );
+        setThinkingQueryId(null);
         return;
       }
+      setChatHistory((prev) =>
+        prev.map((c) =>
+          c.id === tempId
+            ? {
+                ...c,
+                response: aiResponse,
+                coordinates: responseCoordinates,
+                isThinking: false,
+              }
+            : c
+        )
+      );
+      setThinkingQueryId(null);
     } catch (error) {
       console.error(error);
+      setChatHistory((prev) =>
+        prev.map((c) =>
+          c.id === tempId
+            ? {
+                ...c,
+                response: error.message || "An error occurred",
+                error: true,
+                isThinking: false,
+              }
+            : c
+        )
+      );
+      setThinkingQueryId(null);
     } finally {
       setIsAnalyzing(false);
     }
@@ -382,6 +469,8 @@ export default function ChatDetailPage() {
         aiResponse = mlData.response;
         responseCoordinates = mlData.coordinates || [];
       }
+      const parsed = parseBracketedResponse(aiResponse);
+      aiResponse = parsed.content;
 
       await fetch("/api/chats/update", {
         method: "POST",
@@ -401,23 +490,32 @@ export default function ChatDetailPage() {
           metadata: {
             uploadedAt: chat?.metadata?.uploadedAt || new Date(),
             processingTime: 0,
-            imageSize: chat?.metadata?.imageSize || "1024x1024",
+            imageSize: chat?.metadata?.imageSize || "2000x2000",
           },
         }),
       });
       setChatHistory((prev) =>
         prev.map((c) =>
           c.id === tempId
-            ? { ...c, response: aiResponse, coordinates: responseCoordinates }
+            ? {
+                ...c,
+                response: aiResponse,
+                coordinates: responseCoordinates,
+                isThinking: false,
+              }
             : c
         )
       );
+      setThinkingQueryId(null);
     } catch (err) {
       setChatHistory((prev) =>
         prev.map((c) =>
-          c.id === tempId ? { ...c, response: err.message, error: true } : c
+          c.id === tempId
+            ? { ...c, response: err.message, error: true, isThinking: false }
+            : c
         )
       );
+      setThinkingQueryId(null);
     } finally {
       setIsAnalyzing(false);
     }
@@ -896,6 +994,7 @@ export default function ChatDetailPage() {
             chatHistory={chatHistory}
             onQueryClick={handleQueryClick}
             selectedQueryId={selectedQueryId}
+            thinkingQueryId={thinkingQueryId}
           />
         </div>
         {isChatListOpen && (
